@@ -12,17 +12,20 @@ class InvoiceWebhookService
     private CustomerModel $customerModel;
     private InvoiceModel $invoiceModel;
     private WebhookEventModel $webhookEventModel;
+    private ShippingClient $shippingClient;
     private BaseConnection $db;
 
     public function __construct(
         ?CustomerModel $customerModel = null,
         ?InvoiceModel $invoiceModel = null,
         ?WebhookEventModel $webhookEventModel = null,
+        ?ShippingClient $shippingClient = null,
         ?BaseConnection $db = null
     ) {
         $this->customerModel = $customerModel ?? new CustomerModel();
         $this->invoiceModel = $invoiceModel ?? new InvoiceModel();
         $this->webhookEventModel = $webhookEventModel ?? new WebhookEventModel();
+        $this->shippingClient = $shippingClient ?? new ShippingClient();
         $this->db = $db ?? db_connect();
     }
 
@@ -56,17 +59,43 @@ class InvoiceWebhookService
             );
 
             $this->db->transCommit();
+        } catch (\Throwable $exception) {
+            $this->db->transRollback();
+
+            throw $exception;
+        }
+
+        try {
+            $this->shippingClient->createShipment([
+                'invoice_id' => $payload['invoice_id'],
+                'customer' => [
+                    'id' => $payload['customer']['id'],
+                ],
+                'amount' => $payload['amount'],
+                'currency' => $payload['currency'],
+            ]);
+
+            $this->markWebhookProcessed($webhookEventId);
 
             return [
-                'status' => 'stored',
+                'status' => 'processed',
                 'customer_id' => $customerId,
                 'invoice_id' => $invoiceId,
                 'webhook_event_id' => $webhookEventId,
             ];
         } catch (\Throwable $exception) {
-            $this->db->transRollback();
+            $this->markWebhookFailed(
+                $webhookEventId,
+                $exception->getMessage()
+            );
 
-            throw $exception;
+            return [
+                'status' => 'failed',
+                'shipping_status' => 'failed',
+                'customer_id' => $customerId,
+                'invoice_id' => $invoiceId,
+                'webhook_event_id' => $webhookEventId,
+            ];
         }
     }
 
@@ -128,5 +157,25 @@ class InvoiceWebhookService
             'error_message' => null,
             'processed_at' => null,
         ], true);
+    }
+
+    private function markWebhookProcessed(int $webhookEventId): void
+    {
+        $this->webhookEventModel->update($webhookEventId, [
+            'status' => 'processed',
+            'processed_at' => date('Y-m-d H:i:s'),
+            'error_message' => null,
+        ]);
+    }
+
+    private function markWebhookFailed(
+        int $webhookEventId,
+        string $errorMessage
+    ): void {
+        $this->webhookEventModel->update($webhookEventId, [
+            'status' => 'failed',
+            'error_message' => $errorMessage,
+            'processed_at' => null,
+        ]);
     }
 }

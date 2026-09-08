@@ -8,9 +8,24 @@ use App\Services\InvoiceWebhookService;
 
 class WebhookController extends BaseController
 {
+    private InvoiceWebhookService $service;
+
+    public function __construct(?InvoiceWebhookService $service = null)
+    {
+        $this->service = $service ?? new InvoiceWebhookService();
+    }
+
     public function handle(): ResponseInterface
     {
-        $payload = $this->request->getJSON(true);
+        try {
+            $payload = $this->request->getJSON(true);
+        } catch (\Throwable $exception) {
+            return $this->response
+                ->setStatusCode(ResponseInterface::HTTP_BAD_REQUEST)
+                ->setJSON([
+                    'message' => 'Invalid JSON payload.',
+                ]);
+        }
 
         if (! is_array($payload)) {
             return $this->response
@@ -33,8 +48,7 @@ class WebhookController extends BaseController
 
         $validated = $validation->getValidated();
 
-        $service = new InvoiceWebhookService();
-        $result = $service->handle($validated);
+        $result = $this->service->handle($validated);
 
         return $this->response->setJSON($result);
     }
