@@ -15,26 +15,29 @@ app.baseURL = 'http://localhost:8080/'
 #--------------------------------------------------------------------
 
 # Docker database configuration
-DB_DATABASE=
-DB_USERNAME=
+
+DB_DATABASE=webhook_service
+DB_USERNAME=app
 DB_PASSWORD=
 DB_ROOT_PASSWORD=
 DB_HOST=db
 DB_PORT=3306
 
 # CodeIgniter database configuration
+
 database.default.hostname = db
 database.default.database = webhook_service
-database.default.username =
+database.default.username = app
 database.default.password =
 database.default.DBDriver = MySQLi
 database.default.DBPrefix =
 database.default.port = 3306
 
 # Test database configuration
+
 database.tests.hostname = db
 database.tests.database = webhook_service_test
-database.tests.username =
+database.tests.username = app
 database.tests.password =
 database.tests.DBDriver = MySQLi
 database.tests.DBPrefix =
