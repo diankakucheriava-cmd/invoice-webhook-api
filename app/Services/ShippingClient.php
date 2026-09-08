@@ -7,6 +7,9 @@ use RuntimeException;
 
 class ShippingClient
 {
+    private const MAX_ATTEMPTS = 2;
+    private const RETRY_DELAY_MICROSECONDS = 200_000;
+
     private CURLRequest $client;
     private string $baseUrl;
 
@@ -22,47 +25,68 @@ class ShippingClient
 
     public function createShipment(array $invoice): array
     {
-        try {
-            $response = $this->client->post(
-                $this->baseUrl . '/post',
-                [
-                    'json' => [
-                        'invoice_id' => $invoice['invoice_id'],
-                        'customer_id' => $invoice['customer']['id'],
-                        'amount' => $invoice['amount'],
-                        'currency' => $invoice['currency'],
-                    ],
-                    'timeout' => 5,
-                    'http_errors' => false,
-                ]
-            );
-        } catch (\Throwable $exception) {
-            throw new RuntimeException(
-                'Shipping API request failed: ' . $exception->getMessage(),
-                0,
-                $exception
-            );
-        }
+        for ($attempt = 1; $attempt <= self::MAX_ATTEMPTS; $attempt++) {
+            try {
+                $response = $this->client->post(
+                    $this->baseUrl . '/post',
+                    [
+                        'json' => [
+                            'invoice_id' => $invoice['invoice_id'],
+                            'customer_id' => $invoice['customer']['id'],
+                            'amount' => $invoice['amount'],
+                            'currency' => $invoice['currency'],
+                        ],
+                        'timeout' => 5,
+                        'http_errors' => false,
+                    ]
+                );
+            } catch (\Throwable $exception) {
+                if ($attempt < self::MAX_ATTEMPTS) {
+                    usleep(self::RETRY_DELAY_MICROSECONDS);
+                    continue;
+                }
 
-        $statusCode = $response->getStatusCode();
+                throw new RuntimeException(
+                    'Shipping API request failed: ' . $exception->getMessage(),
+                    0,
+                    $exception
+                );
+            }
 
-        if ($statusCode < 200 || $statusCode >= 300) {
+            $statusCode = $response->getStatusCode();
+
+            if ($statusCode >= 200 && $statusCode < 300) {
+                return $this->parseResponse($response->getBody());
+            }
+
+            if (
+                $statusCode >= 500
+                && $attempt < self::MAX_ATTEMPTS
+            ) {
+                usleep(self::RETRY_DELAY_MICROSECONDS);
+                continue;
+            }
+
             throw new RuntimeException(
                 'Shipping API returned HTTP ' . $statusCode
             );
         }
 
-        $body = json_decode(
-            $response->getBody(),
-            true
+        throw new RuntimeException(
+            'Shipping API request failed.'
         );
+    }
 
-        if (! is_array($body)) {
+    private function parseResponse(string $body): array
+    {
+        $data = json_decode($body, true);
+
+        if (! is_array($data)) {
             throw new RuntimeException(
                 'Shipping API returned invalid JSON.'
             );
         }
 
-        return $body;
+        return $data;
     }
 }
