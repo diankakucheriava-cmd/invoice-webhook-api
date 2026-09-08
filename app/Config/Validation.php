@@ -41,4 +41,46 @@ class Validation extends BaseConfig
     // --------------------------------------------------------------------
     // Rules
     // --------------------------------------------------------------------
+    public array $invoiceWebhook = [
+        'event' => [
+            'label' => 'Event',
+            'rules' => 'required|max_length[100]',
+        ],
+        'invoice_id' => [
+            'label' => 'Invoice ID',
+            'rules' => 'required|max_length[100]',
+        ],
+        'customer.id' => [
+            'label' => 'Customer ID',
+            'rules' => 'required|max_length[100]',
+        ],
+        'customer.name' => [
+            'label' => 'Customer name',
+            'rules' => 'required|max_length[255]',
+        ],
+        'customer.email' => [
+            'label' => 'Customer email',
+            'rules' => 'required|valid_email|max_length[255]',
+        ],
+        'amount' => [
+            'label' => 'Amount',
+            'rules' => 'required|decimal|greater_than_equal_to[0]',
+        ],
+        'currency' => [
+            'label' => 'Currency',
+            'rules' => 'required|exact_length[3]|alpha',
+        ],
+        'status' => [
+            'label' => 'Status',
+            'rules' => 'required|max_length[30]',
+        ],
+        'due_date' => [
+            'label' => 'Due date',
+            'rules' => 'required|valid_date[Y-m-d]',
+        ],
+        'created_at' => [
+            'label' => 'Created at',
+            'rules' => 'required|valid_date',
+        ],
+    ];
 }
