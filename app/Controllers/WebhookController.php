@@ -4,6 +4,7 @@ namespace App\Controllers;
 
 use App\Controllers\BaseController;
 use CodeIgniter\HTTP\ResponseInterface;
+use App\Services\InvoiceWebhookService;
 
 class WebhookController extends BaseController
 {
@@ -32,11 +33,9 @@ class WebhookController extends BaseController
 
         $validated = $validation->getValidated();
 
-        // TO DO
+        $service = new InvoiceWebhookService();
+        $result = $service->handle($validated);
 
-        return $this->response->setJSON([
-            'message' => 'Webhook received.',
-            'data'    => $validated,
-        ]);
+        return $this->response->setJSON($result);
     }
 }

@@ -11,7 +11,7 @@ services:
       - "8080:8080"
     depends_on:
       - db
-    command: php spark serve --host=0.0.0.0 --port=8080
+    command: php -S 0.0.0.0:8080 -t public
 
   db:
     image: mysql:8.0
