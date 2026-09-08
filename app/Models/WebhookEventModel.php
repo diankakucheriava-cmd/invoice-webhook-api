@@ -23,4 +23,34 @@ class WebhookEventModel extends Model
     ];
 
     protected $useTimestamps = true;
+
+    public function findByEventAndInvoice(
+        string $eventType,
+        string $externalInvoiceId
+    ): ?array {
+        return $this
+            ->where('event_type', $eventType)
+            ->where('external_invoice_id', $externalInvoiceId)
+            ->first();
+    }
+
+    public function markProcessed(int $id): void
+    {
+        $this->update($id, [
+            'status' => 'processed',
+            'processed_at' => date('Y-m-d H:i:s'),
+            'error_message' => null,
+        ]);
+    }
+
+    public function markFailed(
+        int $id,
+        string $errorMessage
+    ): void {
+        $this->update($id, [
+            'status' => 'failed',
+            'error_message' => $errorMessage,
+            'processed_at' => null,
+        ]);
+    }
 }

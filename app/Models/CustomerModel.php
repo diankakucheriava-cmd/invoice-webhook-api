@@ -18,4 +18,26 @@ class CustomerModel extends Model
     ];
 
     protected $useTimestamps = true;
+
+    public function upsertFromWebhook(array $customer): int
+    {
+        $existingCustomer = $this
+            ->where('external_id', $customer['id'])
+            ->first();
+
+        if ($existingCustomer !== null) {
+            $this->update($existingCustomer['id'], [
+                'name' => $customer['name'],
+                'email' => $customer['email'],
+            ]);
+
+            return (int) $existingCustomer['id'];
+        }
+
+        return (int) $this->insert([
+            'external_id' => $customer['id'],
+            'name' => $customer['name'],
+            'email' => $customer['email'],
+        ], true);
+    }
 }

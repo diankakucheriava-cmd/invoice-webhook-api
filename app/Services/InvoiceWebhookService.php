@@ -31,7 +31,7 @@ class InvoiceWebhookService
 
     public function handle(array $payload): array
     {
-        $existingEvent = $this->findExistingEvent(
+        $existingEvent = $this->webhookEventModel->findByEventAndInvoice(
             $payload['event'],
             $payload['invoice_id']
         );
@@ -46,7 +46,7 @@ class InvoiceWebhookService
         $this->db->transBegin();
 
         try {
-            $customerId = $this->saveCustomer($payload['customer']);
+            $customerId = $this->customerModel->upsertFromWebhook($payload['customer']);
 
             $invoiceId = $this->createInvoice(
                 $payload,
@@ -75,7 +75,7 @@ class InvoiceWebhookService
                 'currency' => $payload['currency'],
             ]);
 
-            $this->markWebhookProcessed($webhookEventId);
+            $this->webhookEventModel->markProcessed($webhookEventId);
 
             return [
                 'status' => 'processed',
@@ -84,7 +84,7 @@ class InvoiceWebhookService
                 'webhook_event_id' => $webhookEventId,
             ];
         } catch (\Throwable $exception) {
-            $this->markWebhookFailed(
+            $this->webhookEventModel->markFailed(
                 $webhookEventId,
                 $exception->getMessage()
             );
@@ -97,38 +97,6 @@ class InvoiceWebhookService
                 'webhook_event_id' => $webhookEventId,
             ];
         }
-    }
-
-    private function findExistingEvent(
-        string $eventType,
-        string $externalInvoiceId
-    ): ?array {
-        return $this->webhookEventModel
-            ->where('event_type', $eventType)
-            ->where('external_invoice_id', $externalInvoiceId)
-            ->first();
-    }
-
-    private function saveCustomer(array $customer): int
-    {
-        $existingCustomer = $this->customerModel
-            ->where('external_id', $customer['id'])
-            ->first();
-
-        if ($existingCustomer !== null) {
-            $this->customerModel->update($existingCustomer['id'], [
-                'name' => $customer['name'],
-                'email' => $customer['email'],
-            ]);
-
-            return (int) $existingCustomer['id'];
-        }
-
-        return (int) $this->customerModel->insert([
-            'external_id' => $customer['id'],
-            'name' => $customer['name'],
-            'email' => $customer['email'],
-        ], true);
     }
 
     private function createInvoice(array $payload, int $customerId): int
@@ -157,25 +125,5 @@ class InvoiceWebhookService
             'error_message' => null,
             'processed_at' => null,
         ], true);
-    }
-
-    private function markWebhookProcessed(int $webhookEventId): void
-    {
-        $this->webhookEventModel->update($webhookEventId, [
-            'status' => 'processed',
-            'processed_at' => date('Y-m-d H:i:s'),
-            'error_message' => null,
-        ]);
-    }
-
-    private function markWebhookFailed(
-        int $webhookEventId,
-        string $errorMessage
-    ): void {
-        $this->webhookEventModel->update($webhookEventId, [
-            'status' => 'failed',
-            'error_message' => $errorMessage,
-            'processed_at' => null,
-        ]);
     }
 }
