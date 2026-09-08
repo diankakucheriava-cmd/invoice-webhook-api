@@ -1,69 +1,137 @@
-# CodeIgniter 4 Application Starter
+# Invoice Webhook API
 
-## What is CodeIgniter?
+Small CodeIgniter 4 API for processing invoice webhooks.
 
-CodeIgniter is a PHP full-stack web framework that is light, fast, flexible and secure.
-More information can be found at the [official site](https://codeigniter.com).
+The endpoint validates an incoming invoice event, stores the customer, invoice and webhook event in MySQL, and sends the invoice data to a mock shipping API.
 
-This repository holds a composer-installable app starter.
-It has been built from the
-[development repository](https://github.com/codeigniter4/CodeIgniter4).
+## Tech Stack
 
-More information about the plans for version 4 can be found in [CodeIgniter 4](https://forum.codeigniter.com/forumdisplay.php?fid=28) on the forums.
+- PHP 8.3
+- CodeIgniter 4
+- MySQL 8
+- Docker / Docker Compose
+- PHPUnit
 
-You can read the [user guide](https://codeigniter.com/user_guide/)
-corresponding to the latest version of the framework.
+## Quick Start
 
-## Installation & updates
+Copy the environment template:
 
-`composer create-project codeigniter4/appstarter` then `composer update` whenever
-there is a new release of the framework.
+```bash
+cp env .env
+```
 
-When updating, check the release notes to see if there are any changes you might need to apply
-to your `app` folder. The affected files can be copied or merged from
-`vendor/codeigniter4/framework/app`.
+Set `DB_PASSWORD`, `DB_ROOT_PASSWORD`, `database.default.password` and `database.tests.password` in `.env`.
 
-## Setup
+Then start the application, run the migrations and tests:
 
-Copy `env` to `.env` and tailor for your app, specifically the baseURL
-and any database settings.
+```bash
+docker compose up -d --build
+docker compose exec app php spark migrate
+docker compose exec app vendor/bin/phpunit
+```
 
-## Important Change with index.php
+```
+The API is available at:
 
-`index.php` is no longer in the root of the project! It has been moved inside the *public* folder,
-for better security and separation of components.
+```text
+http://localhost:8080
+```
 
-This means that you should configure your web server to "point" to your project's *public* folder, and
-not to the project root. A better practice would be to configure a virtual host to point there. A poor practice would be to point your web server to the project root and expect to enter *public/...*, as the rest of your logic and the
-framework are exposed.
+## Webhook Endpoint
 
-**Please** read the user guide for a better explanation of how CI4 works!
+```http
+POST /api/webhooks/invoice
+Content-Type: application/json
+```
 
-## Repository Management
+Example payload:
 
-We use GitHub issues, in our main repository, to track **BUGS** and to track approved **DEVELOPMENT** work packages.
-We use our [forum](http://forum.codeigniter.com) to provide SUPPORT and to discuss
-FEATURE REQUESTS.
+```json
+{
+  "event": "invoice.created",
+  "invoice_id": "INV-2026-00123",
+  "customer": {
+    "id": "CUST-4711",
+    "name": "Muster Optik GmbH",
+    "email": "kontakt@musteroptik.example"
+  },
+  "amount": 249.90,
+  "currency": "CHF",
+  "status": "open",
+  "due_date": "2026-10-15",
+  "created_at": "2026-09-08T10:15:00Z"
+}
+```
 
-This repository is a "distribution" one, built by our release preparation script.
-Problems with it can be raised on our forum, or as issues in the main repository.
+Successful response:
 
-## Server Requirements
+```json
+{
+  "status": "processed",
+  "customer_id": 1,
+  "invoice_id": 1,
+  "webhook_event_id": 1
+}
+```
 
-PHP version 8.2 or higher is required, with the following extensions installed:
+Malformed JSON returns `400 Bad Request`. Invalid webhook data returns `422 Unprocessable Entity` with validation errors.
 
-- [intl](http://php.net/manual/en/intl.requirements.php)
-- [mbstring](http://php.net/manual/en/mbstring.installation.php)
+## Implementation
 
-> [!WARNING]
-> - The end of life date for PHP 7.4 was November 28, 2022.
-> - The end of life date for PHP 8.0 was November 26, 2023.
-> - The end of life date for PHP 8.1 was December 31, 2025.
-> - If you are still using below PHP 8.2, you should upgrade immediately.
-> - The end of life date for PHP 8.2 will be December 31, 2026.
+The application uses two main services:
 
-Additionally, make sure that the following extensions are enabled in your PHP:
+- `InvoiceWebhookService` orchestrates webhook processing, database persistence, transactions and the shipping call.
+- `ShippingClient` handles communication with the external shipping API, including timeout, HTTP errors and a retry for transient server or network failures.
 
-- json (enabled by default - don't turn it off)
-- [mysqlnd](http://php.net/manual/en/mysqlnd.install.php) if you plan to use MySQL
-- [libcurl](http://php.net/manual/en/curl.requirements.php) if you plan to use the HTTP\CURLRequest library
+Validation rules are defined separately in the CodeIgniter validation configuration, keeping the controller focused on request/response handling.
+
+Customer, invoice and webhook event writes are wrapped in a database transaction to prevent partially persisted data.
+
+The shipping request is made after the transaction is committed, so an unavailable external service does not keep the database transaction open. Failed shipping requests are recorded by marking the webhook event as `failed`.
+
+Duplicate webhooks are protected by both an application-level idempotency check and a database unique constraint on:
+
+```text
+(event_type, external_invoice_id)
+```
+
+## Database
+
+```text
+customers
+  └── id, external_id (unique), name, email
+
+invoices
+  └── id, external_id (unique), customer_id, amount,
+      currency, status, due_date, event_created_at
+
+webhook_events
+  └── id, event_type, invoice_id, external_invoice_id,
+      payload (JSON), status, error_message, processed_at
+```
+
+Relations:
+
+```text
+customers  1 ─── *  invoices  1 ─── *  webhook_events
+```
+
+If a customer is deleted, `invoices.customer_id` is set to `NULL`, preserving invoice history.
+
+An invoice referenced by a webhook event cannot be deleted (`ON DELETE RESTRICT`) to protect financial/audit data.
+
+The original webhook payload is stored as JSON for traceability.
+
+## Tests
+
+The test suite covers the main flows, including webhook validation, successful processing, duplicate protection, customer updates, shipping failures and retry behavior.
+
+Database integration tests use a separate `webhook_service_test` database, which is automatically created by the MySQL Docker initialization script.
+
+Run the test suite:
+
+```bash
+docker compose exec app vendor/bin/phpunit
+```
+
+PHPUnit may show `No code coverage driver available`; code coverage is not required to run the test suite.
