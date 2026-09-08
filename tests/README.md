@@ -1,118 +1,162 @@
-# Running Application Tests
+# Invoice Webhook API
 
-This is the quick-start to CodeIgniter testing. Its intent is to describe what
-it takes to set up your application and get it ready to run unit tests.
-It is not intended to be a full description of the test features that you can
-use to test your application. Those details can be found in the documentation.
+Small CodeIgniter 4 API for processing invoice webhooks.
 
-## Resources
+The endpoint validates an incoming invoice event, stores the customer, invoice and webhook event in MySQL, and sends the invoice data to a mock shipping API.
 
-* [CodeIgniter 4 User Guide on Testing](https://codeigniter.com/user_guide/testing/index.html)
-* [PHPUnit docs](https://phpunit.de/documentation.html)
-* [Any tutorials on Unit testing in CI4?](https://forum.codeigniter.com/showthread.php?tid=81830)
+## Tech Stack
 
-## Requirements
+- PHP 8.3
+- CodeIgniter 4
+- MySQL 8
+- Docker / Docker Compose
+- PHPUnit
 
-It is recommended to use the latest version of PHPUnit. At the time of this
-writing, we are running version 9.x. Support for this has been built into the
-**composer.json** file that ships with CodeIgniter and can easily be installed
-via [Composer](https://getcomposer.org/) if you don't already have it installed globally.
+## Setup with Docker
 
-```console
-> composer install
+Copy the environment template:
+
+```bash
+cp env .env
 ```
 
-If running under macOS or Linux, you can create a symbolic link to make running tests a touch nicer.
+Set `DB_PASSWORD`, `DB_ROOT_PASSWORD` and the corresponding CodeIgniter database passwords in `.env`.
 
-```console
-> ln -s ./vendor/bin/phpunit ./phpunit
+Then build and start the containers:
+
+```bash
+docker compose up -d --build
 ```
 
-You also need to install [XDebug](https://xdebug.org/docs/install) in order
-for code coverage to be calculated successfully. After installing `XDebug`, you must add `xdebug.mode=coverage` in the **php.ini** file to enable code coverage.
+Run database migrations:
 
-## Setting Up
-
-A number of the tests use a running database.
-In order to set up the database edit the details for the `tests` group in
-**app/Config/Database.php** or **.env**.
-Make sure that you provide a database engine that is currently running on your machine.
-More details on a test database setup are in the
-[Testing Your Database](https://codeigniter.com/user_guide/testing/database.html) section of the documentation.
-
-## Running the tests
-
-The entire test suite can be run by simply typing one command-line command from the main directory.
-
-```console
-> ./phpunit
+```bash
+docker compose exec app php spark migrate
 ```
 
-If you are using Windows, use the following command.
+The API is available at:
 
-```console
-> vendor\bin\phpunit
+```text
+http://localhost:8080
 ```
 
-You can limit tests to those within a single test directory by specifying the
-directory name after phpunit.
+## Webhook Endpoint
 
-```console
-> ./phpunit app/Models
+```http
+POST /api/webhooks/invoice
+Content-Type: application/json
 ```
 
-## Generating Code Coverage
+Example payload:
 
-To generate coverage information, including HTML reports you can view in your browser,
-you can use the following command:
-
-```console
-> ./phpunit --colors --coverage-text=tests/coverage.txt --coverage-html=tests/coverage/ -d memory_limit=1024m
+```json
+{
+  "event": "invoice.created",
+  "invoice_id": "INV-2026-00123",
+  "customer": {
+    "id": "CUST-4711",
+    "name": "Muster Optik GmbH",
+    "email": "kontakt@musteroptik.example"
+  },
+  "amount": 249.90,
+  "currency": "CHF",
+  "status": "open",
+  "due_date": "2026-10-15",
+  "created_at": "2026-09-08T10:15:00Z"
+}
 ```
 
-This runs all of the tests again collecting information about how many lines,
-functions, and files are tested. It also reports the percentage of the code that is covered by tests.
-It is collected in two formats: a simple text file that provides an overview as well
-as a comprehensive collection of HTML files that show the status of every line of code in the project.
+Successful response:
 
-The text file can be found at **tests/coverage.txt**.
-The HTML files can be viewed by opening **tests/coverage/index.html** in your favorite browser.
+```json
+{
+  "status": "processed",
+  "customer_id": 1,
+  "invoice_id": 1,
+  "webhook_event_id": 1
+}
+```
 
-## PHPUnit XML Configuration
+Malformed JSON returns `400 Bad Request`. Invalid webhook data returns `422 Unprocessable Entity` with validation errors.
 
-The repository has a ``phpunit.dist.xml`` file in the project root that's used for
-PHPUnit configuration. This is used to provide a default configuration if you
-do not have your own configuration file in the project root.
+## Implementation
 
-The normal practice would be to copy ``phpunit.dist.xml`` to ``phpunit.xml``
-(which is git ignored), and to tailor it as you see fit.
-For instance, you might wish to exclude database tests, or automatically generate
-HTML code coverage reports.
+The application uses two main services:
 
-## Test Cases
+- `InvoiceWebhookService` orchestrates webhook processing, database persistence, transactions and the shipping call.
+- `ShippingClient` handles communication with the external shipping API, including timeout, HTTP errors and a retry for transient server or network failures.
 
-Every test needs a *test case*, or class that your tests extend. CodeIgniter 4
-provides one class that you may use directly:
-* `CodeIgniter\Test\CIUnitTestCase`
+Validation rules are defined separately in the CodeIgniter validation configuration, keeping the controller focused on request/response handling.
 
-Most of the time you will want to write your own test cases that extend `CIUnitTestCase`
-to hold functions and services common to your test suites.
+Customer, invoice and webhook event writes are wrapped in a database transaction to prevent partially persisted data.
 
-## Creating Tests
+The shipping request is made after the transaction is committed, so an unavailable external service does not keep the database transaction open. Failed shipping requests are recorded by marking the webhook event as `failed`.
 
-All tests go in the **tests/** directory. Each test file is a class that extends a
-**Test Case** (see above) and contains methods for the individual tests. These method
-names must start with the word "test" and should have descriptive names for precisely what
-they are testing:
-`testUserCanModifyFile()` `testOutputColorMatchesInput()` `testIsLoggedInFailsWithInvalidUser()`
+Duplicate webhooks are protected by both an application-level idempotency check and a database unique constraint on:
 
-Writing tests is an art, and there are many resources available to help learn how.
-Review the links above and always pay attention to your code coverage.
+```text
+(event_type, external_invoice_id)
+```
 
-### Database Tests
+## Database
 
-Tests can include migrating, seeding, and testing against a mock or live database.
-Be sure to modify the test case (or create your own) to point to your seed and migrations
-and include any additional steps to be run before tests in the `setUp()` method.
-See [Testing Your Database](https://codeigniter.com/user_guide/testing/database.html)
-for details.
+```text
+customers
+  └── id, external_id (unique), name, email
+
+invoices
+  └── id, external_id (unique), customer_id, amount,
+      currency, status, due_date, event_created_at
+
+webhook_events
+  └── id, event_type, invoice_id, external_invoice_id,
+      payload (JSON), status, error_message, processed_at
+```
+
+Relations:
+
+```text
+customers  1 ─── *  invoices  1 ─── *  webhook_events
+```
+
+If a customer is deleted, `invoices.customer_id` is set to `NULL`, preserving invoice history.
+
+An invoice referenced by a webhook event cannot be deleted (`ON DELETE RESTRICT`) to protect financial/audit data.
+
+The original webhook payload is stored as JSON for traceability.
+
+## Tests
+
+The test suite covers the main flows, including webhook validation, successful processing, duplicate protection, customer updates, shipping failures and retry behavior.
+
+Database integration tests use a separate `webhook_service_test` database.
+
+Create the test database and grant access to the application user:
+
+```bash
+docker compose exec db mysql -uroot -p -e "
+CREATE DATABASE IF NOT EXISTS webhook_service_test;
+GRANT ALL PRIVILEGES ON webhook_service_test.* TO 'app'@'%';
+FLUSH PRIVILEGES;
+"
+```
+
+Use the same database credentials in your local `.env`:
+
+```dotenv
+database.tests.hostname = db
+database.tests.database = webhook_service_test
+database.tests.username = app
+database.tests.password = <your-db-password>
+database.tests.DBDriver = MySQLi
+database.tests.DBPrefix =
+database.tests.port = 3306
+```
+
+Then run the test suite:
+
+```bash
+docker compose exec app vendor/bin/phpunit
+```
+
+PHPUnit may show `No code coverage driver available`; code coverage is not required to run the test suite.
